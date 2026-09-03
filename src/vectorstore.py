@@ -1,44 +1,64 @@
 from pathlib import Path
 
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
 
+from src.embeddings import get_embeddings
 from src.loader import load_pdf, split_documents
 
 
 CHROMA_PATH = "chroma_db"
-COLLECTION_NAME = "resume_collection"
+COLLECTION_NAME = "documents_collection"
 
 
-def create_vectorstore(pdf_path):
+def create_vectorstore(pdf_path, session_id):
     documents = load_pdf(pdf_path)
     chunks = split_documents(documents)
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    embeddings = get_embeddings()
 
-    # Remove old collection so uploaded PDFs don't get mixed together
-    temp_store = Chroma(
+    vectorstore = Chroma(
         persist_directory=CHROMA_PATH,
         collection_name=COLLECTION_NAME,
         embedding_function=embeddings
     )
 
-    temp_store.delete_collection()
+    source_name = Path(pdf_path).name
 
-    vectorstore = Chroma.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-        persist_directory=CHROMA_PATH,
-        collection_name=COLLECTION_NAME
+    # Remove only this PDF from this user's session
+    try:
+        vectorstore.delete(
+            where={
+                "$and": [
+                    {"source": source_name},
+                    {"session_id": session_id}
+                ]
+            }
+        )
+    except Exception as e:
+        print(
+            f"Warning: Could not remove existing chunks "
+            f"for '{source_name}': {e}"
+        )
+
+    # Add session information to every chunk
+    for chunk in chunks:
+        chunk.metadata["source"] = source_name
+        chunk.metadata["session_id"] = session_id
+
+    vectorstore.add_documents(chunks)
+
+    print(
+        f"Stored {len(chunks)} chunks from '{source_name}' "
+        f"for session '{session_id}'."
     )
-
-    print(f"Stored {len(chunks)} chunks in ChromaDB.")
 
     return vectorstore
 
 
 if __name__ == "__main__":
     pdf_path = Path("data/documents/DevanshiPatel_Resume__.pdf")
-    create_vectorstore(pdf_path)
+
+    create_vectorstore(
+        pdf_path,
+        session_id="test-session"
+    )
