@@ -10,7 +10,7 @@ COLLECTION_NAME = "documents_collection"
 
 TOP_K = 10
 FINAL_K = 3
-DISTANCE_THRESHOLD = 1.8
+DISTANCE_THRESHOLD = 2.0
 
 
 def get_keywords(text):
@@ -73,13 +73,15 @@ def rerank_results(query, results):
 
         keyword_score = len(keyword_matches)
 
-        # Keyword relevance is only a small additional signal.
+        # Give a small bonus when the complete query
+        # appears in the document.
         phrase_bonus = 0
 
         if query_lower.strip() in text_lower:
             phrase_bonus = 5
 
-        # Vector similarity remains the primary signal.
+        # Combine semantic similarity with
+        # lightweight keyword relevance.
         final_score = (
             keyword_score * 0.5
             + phrase_bonus
@@ -100,9 +102,11 @@ def rerank_results(query, results):
         reverse=True
     )
 
+    # Return all reranked candidates.
+    # FINAL_K is applied after threshold filtering.
     return [
         (document, distance)
-        for document, distance, _ in scored_results[:FINAL_K]
+        for document, distance, _ in scored_results
     ]
 
 
@@ -118,7 +122,8 @@ def get_relevant_documents_with_scores(
         embedding_function=embeddings
     )
 
-    # First stage: vector similarity search.
+    # First stage:
+    # retrieve a larger candidate set using vector similarity.
     results = vectorstore.similarity_search_with_score(
         query,
         k=TOP_K,
@@ -127,18 +132,18 @@ def get_relevant_documents_with_scores(
         }
     )
 
-    # Remove weak vector matches.
-    results = [
-        (document, distance)
-        for document, distance in results
-        if distance <= DISTANCE_THRESHOLD
-    ]
-
-    # Second stage: lightweight reranking.
+    # Second stage:
+    # rerank candidates using vector distance
+    # plus lightweight keyword relevance.
     results = rerank_results(
         query,
         results
     )
+
+    # Third stage:
+    # remove weak final matches and keep only
+    # the best few chunks for the LLM.
+    results = results[:FINAL_K]
 
     return results
 
